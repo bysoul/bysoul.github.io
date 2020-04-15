@@ -1,11 +1,10 @@
 ---
 layout: post
-title: 6.828 lab3: KV Raft
-date: 2020-04-15 13:32:20 +0800
+title: The Best Organizer Softwaree
+date: 2017-09-12 00:00:00 +0300
 description: You’ll find this post in your `_posts` directory. Go ahead and edit it and re-build the site to see your changes. # Add post description (optional)
-img: i-rest.jpg # Add image post (optional)
-fig-caption: # Add figcaption (optional)
-tags: [Distribute System]
+img: software.jpg # Add image post (optional)
+tags: [Productivity, Software] # add tag
 ---
 lab3是基于lab2的raft实现一个保证线性的kv server，并且实现snapshot特性。lab3做完感觉整体性没有lab2那么强，本文会分别说一说3a和3b的要注意的问题，以及笔者是怎么解决的，主要内容如下：
 
