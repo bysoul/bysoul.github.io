@@ -20,7 +20,10 @@ lab3是基于lab2的raft实现一个保证线性的kv server，并且实现snaps
 + 2.2 主动snapshot时机
 
 
+
 #3A
+
+
 ##1.1 请求去重
 
 
