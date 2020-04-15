@@ -1,0 +1,66 @@
+---
+layout: post
+title: 6.828 lab3: KV Raft
+date: 2020-04-15 13:32:20 +0800
+description: You’ll find this post in your `_posts` directory. Go ahead and edit it and re-build the site to see your changes. # Add post description (optional)
+img: i-rest.jpg # Add image post (optional)
+fig-caption: # Add figcaption (optional)
+tags: [Distribute System]
+---
+lab3是基于lab2的raft实现一个保证线性的kv server，并且实现snapshot特性。lab3做完感觉整体性没有lab2那么强，本文会分别说一说3a和3b的要注意的问题，以及笔者是怎么解决的，主要内容如下：
+
+
+3A 
++ 1.1 请求去重
++ 1.2 server返回无效请求
++ 1.3 新leader提交之前term的entry
+
+
+3B 
++ 2.1 index转换
++ 2.2 主动snapshot时机
+#3A
+##1.1 请求去重
+（1） 去重方法
+
+
+一个简单的想法，给每个client的请求都分配一个id，刚好用到client. go里给的nrand()，在server端维护一个hashset，判断是否重复。
+这个方法有两个问题，一nrand()生成的id有可能重复，虽然在lab的数据量下，int64重复的概率较小；二是hashset的size会无限增长，当3b中把hashset作为snapshot的一部分进行存储时，会导致snapshot过大，test失败。
+所以笔者为每一个client分配一个id，每个请求分配一个sequence number，hashmap维护每个client的最大sequence number。可以这样做的前提是lab中的client每次只发送一个请求，当前请求完成后才会发送下一个。
+
+
+（2） 去重时机
+去重本质上不是server对接受到的请求去重，而是对commit的entry进行去重，就是说同一个请求不能两次apply到server的state machine上。
+所以选择在entry commit到kv server之后去重，不重复则apply到kv的hashmap上，重复则不处理，之后通知正在等待的请求。
+## 1.2 server返回无效请求
+这里的无效请求是指：一个请求start到了一个index上，然而这个index上当前commit的command不是这个请求，或者判断这个index上未来commit的不会是该请求。
+所以假如kv server发现一个index下，正在等待的某个请求与commit的command不同，那么立即返回server的所有比该index大的所有请求，使client重新发送。
+1.3 新leader提交之前term的entry
+
+
+raft选举后假如当前term没有新start的entry，那么之前term遗留下的entry永远不会commit。这样会导致之前的请求一直等待，无法返回。
+所以每次raft选举后，向ApplyCh发送一个消息，提醒server主动start一个新的entry，并且这个entry里面应该有当前server的id，即kv.me。
+#3B
+##2.1 index转换
+在舍弃旧的log之后，需要对log逻辑上的index和数组里的index进行转换：
+realIndex = arrayIndex + rf.lastIncludedIndex + 1
+rf.lastIncludedIndex初始化为-1，并且lastIncludedIndex和lastIncludedTerm都要作为raft的state保存起来。注意在实现snapshot之后，每一处使用旧的arrayIndex的地方都要进行转换，非常容易有遗漏，然后就会产生bug。
+##2.2 主动snapshot时机
+lab告诉我们kv.maxraftstate < kv.rf.StateSize()时进行snapshot，所以一般的想法是每次server从ApplyCh中获取一个command，就进行一次判断，然后进行snapshot。
+但是这个方法有个问题，在raft commit的时候，rf.mu是锁上的，server进行snapshot会改变rf.log也需要对rf.mu上锁，就会造成死锁。
+
+
+乍看有两种办法：
+
+（1）raft commit的时候，先新建变量存储command，再解锁rf.mu，发送command后再上锁。但是rf.mu解锁会允许raft进行其他操作，比如接受到了snapshot rpc改变了rf.log，那么下一次存储command的时候就可能out of range。需要对commit过程做很多其他的约束，很麻烦并且容易出错。
+
+
+（2）新建协程让server进行snapshot。这种办法的问题在于，snapshot不能立即执行，一旦连续commit了多个command，那么每次都会新建协程进行snapshot，并且只有第一次是有效的，严重影响效率。
+所以笔者没有选择每次从ApplyCh中获取，就进行一次判断。而是让raft在连续commit完成之后，单独从ApplyCh给server发送一种消息，告知raft已经完成commit了，如果判断需要进行snapshot，就新建协程，传输给该协程当前的index和状态，执行snapshot。
+
+
+总的来说，感觉lab3还是比较麻烦的，要处理很多细节，尤其是index转换和snapshot rpc导致的raft状态变化。不过snapshot rpc相对论文简单了很多，实验也不需要实现我觉得最麻烦的membership change。所以只要细心一点（解bug)，应该没什么问题。
+最后按惯例附上3A+3B的时间，我们lab4再见。
+ 
+ ![Record]({{site.baseurl}}/assets/img/lab3.png)
+
